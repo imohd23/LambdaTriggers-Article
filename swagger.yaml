@@ -1,0 +1,32 @@
+---
+swagger: "2.0"
+info:
+  version: "1.0"
+  title: "Lambda Triggers Tutorial"
+host: "execute-api.eu-west-1.amazonaws.com"
+basePath: "/Prod"
+schemes:
+- "https"
+paths:
+  #Main Configuration
+  ## Pre Signed Link
+  /getApiGW:
+    get:
+      responses:
+        200:
+          Description: Ok
+      x-amazon-apigateway-integration:
+        uri: "arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-west-1:XXXXXXXXXXX:function:LambdaTriggers-APIGW/invocations"
+        passthroughBehavior: "when_no_match"
+        httpMethod: "POST"
+        type: "aws"
+        # requestTemplates:
+        #   application/json: "{\n \"industry_id\" : \"$input.params('industry_id')\" \n}"
+        responses:
+          "default":
+            statusCode: "200"
+          "BAD.*":
+            statusCode: "400"
+          "INT.*":
+            statusCode: "500"
+

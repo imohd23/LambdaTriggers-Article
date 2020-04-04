@@ -1,0 +1,174 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Auth: Mohamed Latfalla
+
+  Title: Lambda Triggers Tutorial
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 5
+    Runtime: python3.6
+
+Resources:
+  #*************************************************
+  #* API Gateway Configuration
+  #*************************************************
+  #* Configure Lambda that will work via API GW
+  APIGWFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: APIGWTrigger/
+      Handler: APIGWTrigger.lambda_handler
+      FunctionName: LambdaTriggers-APIGW
+      Tracing: Active
+      Events:
+        ApiGateway:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            RestApiId: !Ref ApiGatewayApi
+            Path: /getApiGW
+            Method: get
+  
+  #* Grant Lambda permission to be executed by API GW
+  LambdaPermissionAPIGW:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt APIGWFunction.Arn
+      Principal: "apigateway.amazonaws.com"
+  
+  APIGWLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: LambdaTriggerTutorial-APIGW
+      RetentionInDays: 3
+                  
+
+  #* API GW Declaration Part
+  ApiGatewayApi:
+      DependsOn:
+      - APIGWFunction
+      Type: AWS::Serverless::Api
+      Properties:
+        DefinitionUri: ./swagger.yaml #*Path for your API Gateway configurations
+        StageName: Prod
+        # AccessLogSetting: 
+        #   DestinationArn: !GetAtt APIGWLogGroup.Arn
+  #*************************************************
+  #* SQS Configuration
+  #*************************************************
+  #* Configure SQS to load data into Lambda
+  LambdaSQS:
+    Type: AWS::SQS::Queue
+    Properties: 
+      DelaySeconds: 0 #this will send the request as soon as it gets it
+      MaximumMessageSize: 262144 #the default
+      MessageRetentionPeriod: 60 #will retain it for a min
+      QueueName: lambdaSQS
+      ReceiveMessageWaitTimeSeconds: 3 #wait 3 sec to make msg available for the consumer
+      VisibilityTimeout: 30
+  
+  #* SQS Policy to have permission for reading and writing to Lambda
+  SQSPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+            - sqs:*
+            Resource: !GetAtt LambdaSQS.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: "arn:aws:lambda:::*"
+            Principal:
+              AWS: "*"
+      Queues: 
+        - !Ref LambdaSQS
+  
+  #* Configure Lambda that will work via SQS
+  SQSFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: SQSTrigger/
+      Handler: SQSTrigger.lambda_handler
+      FunctionName: LambdaTriggers-SQS
+      Tracing: Active
+      Events:
+        MySQSEvent:
+          Type: SQS # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Queue: !GetAtt LambdaSQS.Arn
+            BatchSize: 10 
+
+  #* Grant Lambda permission to be executed by SQS
+  LambdaPermissionSQS:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt SQSFunction.Arn
+      Principal: "sqs.amazonaws.com"
+  #*************************************************
+  #* S3 Configuration
+  #*************************************************
+  MainBucket:
+    Type: AWS::S3::Bucket # for more details https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html#cfn-s3-bucket-name
+    Properties:
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256 
+      # BucketName: STRING
+      NotificationConfiguration: 
+        LambdaConfigurations: 
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt S3Function.Arn
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  #* Configure S3 Policy
+  S3Policy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:PutObjectAcl
+          Resource: !Sub "arn:aws:s3:::${MainBucket}/*"
+          Principal:
+            Service: s3.amazonaws.com
+      Bucket: !Ref MainBucket
+  
+  #* Configure Lambda that will work via SQS
+  S3Function:    
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: S3Trigger/
+      Handler: S3Trigger.lambda_handler
+      FunctionName: LambdaTriggers-S3
+      Tracing: Active
+      Events:
+        MyS3Event:
+          Type: S3 # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Bucket: !Ref MainBucket
+            Events: s3:ObjectCreated:*
+
+  #* Grant Lambda permission to be executed by S3
+  LambdaPermissionS3:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt S3Function.Arn
+      Principal: "s3.amazonaws.com"
+  
